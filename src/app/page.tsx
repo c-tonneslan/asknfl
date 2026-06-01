@@ -18,6 +18,8 @@ export default function Home() {
     output: number;
     cache: number;
   } | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
 
   useEffect(() => {
     getDB().then(
@@ -35,6 +37,8 @@ export default function Home() {
     setResult(null);
     setError(null);
     setUsage(null);
+    setSummary(null);
+    setSummarizing(false);
     setStage(dbReady ? "generating" : "loading-db");
     try {
       const res = await fetch("/api/sql", {
@@ -68,6 +72,28 @@ export default function Home() {
       setResult(r);
       setStage(r.ok ? "done" : "error");
       if (!r.ok) setError(r.error);
+      if (r.ok) {
+        // Fire-and-forget summary; failures don't block the result table.
+        setSummarizing(true);
+        fetch("/api/summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: q,
+            sql: json.sql,
+            columns: r.columns,
+            rows: r.rows,
+          }),
+        })
+          .then(async (resp) => {
+            const sj = (await resp.json()) as { summary?: string; error?: string };
+            if (sj.summary) setSummary(sj.summary);
+          })
+          .catch(() => {
+            // Silent: the summary is a bonus, not the answer.
+          })
+          .finally(() => setSummarizing(false));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStage("error");
@@ -182,6 +208,16 @@ export default function Home() {
           <pre className="mt-2 rounded-md bg-neutral-900 text-neutral-100 text-xs px-3 py-3 overflow-x-auto font-mono">
             {sql}
           </pre>
+        </section>
+      )}
+
+      {result?.ok && (summarizing || summary) && (
+        <section className="mt-6">
+          <p className="text-base text-neutral-800 leading-relaxed">
+            {summary ?? (
+              <span className="text-neutral-400 italic">summarizing…</span>
+            )}
+          </p>
         </section>
       )}
 

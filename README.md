@@ -77,7 +77,6 @@ This is a one-click Vercel deploy. The only required env var is `ANTHROPIC_API_K
 
 ## What's next
 
-- A second Claude call to write a one-sentence summary of the result.
 - A small bar chart for top-N aggregates.
 - Eval set: 30 questions with gold SQL + tolerance bands on the numbers, so I can measure prompt regressions.
 - 2024 data once it's stable on nflverse.
