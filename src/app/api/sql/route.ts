@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { schemaPrompt, TABLE_NAME } from "@/lib/schema";
+import { validateGeneratedSql } from "@/lib/sql-validate";
 
 export const runtime = "edge";
 
@@ -100,6 +101,15 @@ export async function POST(req: Request) {
   // Strip the occasional fence + trailing semicolon
   sql = sql.replace(/^```(?:sql)?\s*/i, "").replace(/```\s*$/i, "").trim();
   sql = sql.replace(/;+\s*$/, "").trim();
+
+  const v = validateGeneratedSql(sql);
+  if (!v.ok) {
+    return Response.json(
+      { error: `Generated SQL was rejected (${v.reason}). Try rewording the question.` },
+      { status: 502 },
+    );
+  }
+  sql = v.sql;
 
   return Response.json({
     sql,
