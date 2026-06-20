@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const SYSTEM = `You write a one-sentence summary of a DuckDB result set for an NFL question.
 

@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { schemaPrompt, TABLE_NAME } from "@/lib/schema";
 import { validateGeneratedSql } from "@/lib/sql-validate";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const SYSTEM = `You translate plain-English questions about NFL play-by-play data into a single DuckDB SQL query.
 
