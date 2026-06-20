@@ -74,7 +74,9 @@ export async function POST(req: Request) {
   }
 
   const client = new Anthropic({ apiKey });
-  const res = await client.messages.create({
+  let res;
+  try {
+    res = await client.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 600,
     system: [
@@ -91,6 +93,12 @@ export async function POST(req: Request) {
       },
     ],
   });
+  } catch (e) {
+    return Response.json(
+      { error: `Claude call failed: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 502 },
+    );
+  }
 
   const block = res.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") {
