@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { runQuery, getDB, type RunResult } from "@/lib/duckdb";
 import { EXAMPLES } from "@/lib/examples";
+import { validateGeneratedSql } from "@/lib/sql-validate";
+import { SCHEMA_LINES } from "@/lib/schema";
 
 // Cap how many rows we render in the table (materialization is already bounded in
 // runQuery); everything is still downloadable via CSV.
@@ -39,6 +41,19 @@ export default function Home() {
     );
   }, []);
 
+  // Shared links: if the page loads with ?q=..., prefill and run it once.
+  const bootstrapped = useRef(false);
+  useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+    const q = new URLSearchParams(window.location.search).get("q")?.trim();
+    if (q) {
+      setQuestion(q);
+      ask(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Scroll the answer into view once a query starts — on a phone the results
   // render far below the chips, so otherwise a fast query looks like a no-op.
   useEffect(() => {
@@ -47,10 +62,68 @@ export default function Home() {
     }
   }, [stage]);
 
+  // Reflect the current question in the URL so a result is shareable/bookmarkable
+  // (?q=...). replaceState keeps it out of the back-button history.
+  function syncUrl(q: string) {
+    try {
+      window.history.replaceState(null, "", q ? `?q=${encodeURIComponent(q)}` : window.location.pathname);
+    } catch {
+      // Non-browser / sandboxed contexts: the URL is a nicety, not load-bearing.
+    }
+  }
+
+  // Fire-and-forget one-sentence summary; failures never block the table.
+  function summarize(q: string, sqlText: string, r: RunResult, current: () => boolean) {
+    if (!r.ok) return;
+    setSummarizing(true);
+    fetch("/api/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, sql: sqlText, columns: r.columns, rows: r.rows }),
+    })
+      .then(async (resp) => {
+        const sj = (await resp.json()) as { summary?: string; error?: string };
+        if (current() && sj.summary) setSummary(sj.summary);
+      })
+      .catch(() => {
+        // Silent: the summary is a bonus, not the answer.
+      })
+      .finally(() => {
+        if (current()) setSummarizing(false);
+      });
+  }
+
+  // Re-run SQL the user has edited by hand, straight against DuckDB-WASM —
+  // skipping the Claude round-trip. Still validated so the httpfs/read_parquet
+  // guard from the API applies to hand-written queries too.
+  async function runEditedSql(edited: string) {
+    const v = validateGeneratedSql(edited);
+    if (!v.ok) {
+      setResult(null);
+      setError(`That SQL was rejected (${v.reason}). Only a single read-only SELECT is allowed.`);
+      setStage("error");
+      return;
+    }
+    const myId = ++reqId.current;
+    const current = () => reqId.current === myId;
+    setSql(v.sql);
+    setError(null);
+    setSummary(null);
+    setSummarizing(false);
+    setStage("running");
+    const r = await runQuery(v.sql);
+    if (!current()) return;
+    setResult(r);
+    setStage(r.ok ? "done" : "error");
+    if (!r.ok) setError(r.error);
+    else summarize(question, v.sql, r, current);
+  }
+
   async function ask(q: string) {
     const myId = ++reqId.current;
     const current = () => reqId.current === myId;
     setQuestion(q);
+    syncUrl(q);
     setSql(null);
     setResult(null);
     setError(null);
@@ -92,30 +165,7 @@ export default function Home() {
       setResult(r);
       setStage(r.ok ? "done" : "error");
       if (!r.ok) setError(r.error);
-      if (r.ok) {
-        // Fire-and-forget summary; failures don't block the result table.
-        setSummarizing(true);
-        fetch("/api/summarize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            question: q,
-            sql: json.sql,
-            columns: r.columns,
-            rows: r.rows,
-          }),
-        })
-          .then(async (resp) => {
-            const sj = (await resp.json()) as { summary?: string; error?: string };
-            if (current() && sj.summary) setSummary(sj.summary);
-          })
-          .catch(() => {
-            // Silent: the summary is a bonus, not the answer.
-          })
-          .finally(() => {
-            if (current()) setSummarizing(false);
-          });
-      }
+      else summarize(q, json.sql, r, current);
     } catch (e) {
       if (!current()) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -233,6 +283,7 @@ export default function Home() {
             </button>
           ))}
         </div>
+        <SchemaDrawer />
       </section>
 
       <div ref={resultsRef} className="scroll-mt-6">
@@ -283,6 +334,8 @@ export default function Home() {
 
         {result?.ok && <Headline columns={result.columns} rows={result.rows} />}
 
+        {result?.ok && <BarChart columns={result.columns} rows={result.rows} />}
+
         {result?.ok && result.rows.length > 0 && (
           <section className="mt-6">
             <div className="flex items-baseline justify-between gap-3">
@@ -295,6 +348,7 @@ export default function Home() {
                 <span className="text-xs text-neutral-500">
                   {result.elapsedMs.toFixed(0)} ms in-browser
                 </span>
+                <ShareButton />
                 <DownloadCsvButton
                   columns={result.columns}
                   rows={result.rows}
@@ -314,28 +368,14 @@ export default function Home() {
               </span>
               Show the SQL Claude wrote
             </summary>
-            <div className="mt-2 overflow-hidden rounded-md border border-neutral-200">
-              <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5">
-                <span className="text-xs font-medium text-neutral-500">DuckDB SQL</span>
-                <div className="flex items-center gap-3">
-                  {usage && (
-                    <span className="text-xs text-neutral-400">
-                      {usage.input + usage.cache} in · {usage.output} out
-                      {usage.cache > 0 ? " · cache hit" : ""}
-                    </span>
-                  )}
-                  <CopyButton text={sql} label="Copy" />
-                </div>
-              </div>
-              <pre
-                className="overflow-x-auto bg-neutral-900 px-3 py-3 font-mono text-xs text-neutral-100"
-                tabIndex={0}
-              >
-                {sql}
-              </pre>
-            </div>
+            <SqlEditor
+              sql={sql}
+              usage={usage}
+              busy={busy}
+              onRun={runEditedSql}
+            />
             <p className="mt-1.5 text-xs text-neutral-400">
-              Runs read-only in your browser via DuckDB-WASM — only your question ever leaves the page.
+              Editable — tweak it and re-run against DuckDB-WASM in your browser. Only your question ever leaves the page.
             </p>
           </details>
         )}
@@ -535,6 +575,183 @@ function humanizeError(error: string): string {
     return "The question couldn't reach the model. This is usually temporary — try again.";
   }
   return "Something went wrong running that question. Try rewording it, or ask a simpler version.";
+}
+
+// nflverse 3-letter team code -> primary color, for coloring ranking bars.
+const TEAM_COLORS: Record<string, string> = {
+  ARI: "#97233F", ATL: "#A71930", BAL: "#241773", BUF: "#00338D",
+  CAR: "#0085CA", CHI: "#0B162A", CIN: "#FB4F14", CLE: "#311D00",
+  DAL: "#003594", DEN: "#FB4F14", DET: "#0076B6", GB: "#203731",
+  HOU: "#03202F", IND: "#002C5F", JAX: "#006778", KC: "#E31837",
+  LA: "#003594", LAC: "#0080C6", LV: "#000000", MIA: "#008E97",
+  MIN: "#4F2683", NE: "#002244", NO: "#D3BC8D", NYG: "#0B2265",
+  NYJ: "#125740", PHI: "#004C54", PIT: "#FFB612", SEA: "#002244",
+  SF: "#AA0000", TB: "#D50A0A", TEN: "#0C2340", WAS: "#5A1414",
+};
+
+// A ranking result (a label column + a numeric column, a handful of rows) reads
+// far better as bars than as a table of numbers. Dependency-free: plain divs
+// scaled by value. Falls back to nothing when the shape doesn't fit.
+function BarChart({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
+  if (rows.length < 2 || rows.length > 30) return null;
+
+  const labelIdx = columns.findIndex((_, j) => typeof firstDefined(rows, j) === "string");
+  const valueIdx = columns.findIndex((_, j) => typeof firstDefined(rows, j) === "number");
+  if (labelIdx === -1 || valueIdx === -1) return null;
+
+  const points = rows
+    .map((r) => ({ label: r[labelIdx], value: r[valueIdx] }))
+    .filter((p) => typeof p.value === "number" && p.label != null) as {
+    label: string;
+    value: number;
+  }[];
+  if (points.length < 2) return null;
+
+  const max = Math.max(...points.map((p) => Math.abs(p.value)));
+  if (max === 0) return null;
+
+  return (
+    <section className="mt-6">
+      <h2 className="text-sm font-medium text-neutral-700 mb-2">
+        {humanizeColumn(columns[valueIdx])} by {humanizeColumn(columns[labelIdx])}
+      </h2>
+      <div className="space-y-1.5">
+        {points.map((p, i) => {
+          const code = String(p.label).toUpperCase();
+          const color = TEAM_COLORS[code] ?? "var(--accent)";
+          return (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              <div className="w-28 shrink-0 truncate text-right text-neutral-600" title={String(p.label)}>
+                {String(p.label)}
+              </div>
+              <div className="relative h-5 flex-1 rounded bg-neutral-100">
+                <div
+                  className="absolute inset-y-0 left-0 rounded"
+                  style={{ width: `${(Math.abs(p.value) / max) * 100}%`, backgroundColor: color }}
+                />
+              </div>
+              <div className="w-16 shrink-0 text-right font-mono tabular-nums text-neutral-900">
+                {formatNumber(p.value)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function firstDefined(rows: unknown[][], j: number): unknown {
+  return rows.find((r) => r[j] !== null && r[j] !== undefined)?.[j];
+}
+
+// The generated SQL, editable and re-runnable straight against DuckDB-WASM.
+function SqlEditor({
+  sql,
+  usage,
+  busy,
+  onRun,
+}: {
+  sql: string;
+  usage: { input: number; output: number; cache: number } | null;
+  busy: boolean;
+  onRun: (sql: string) => void;
+}) {
+  const [text, setText] = useState(sql);
+  // Reset the editor when a new question generates fresh SQL.
+  useEffect(() => setText(sql), [sql]);
+  const dirty = text.trim() !== sql.trim();
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-md border border-neutral-200">
+      <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5">
+        <span className="text-xs font-medium text-neutral-500">DuckDB SQL</span>
+        <div className="flex items-center gap-3">
+          {usage && (
+            <span className="text-xs text-neutral-400">
+              {usage.input + usage.cache} in · {usage.output} out
+              {usage.cache > 0 ? " · cache hit" : ""}
+            </span>
+          )}
+          <CopyButton text={text} label="Copy" />
+        </div>
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        spellCheck={false}
+        rows={Math.min(12, text.split("\n").length + 1)}
+        aria-label="Editable SQL"
+        className="block w-full resize-y bg-neutral-900 px-3 py-3 font-mono text-xs text-neutral-100 outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !busy) {
+            e.preventDefault();
+            onRun(text);
+          }
+        }}
+      />
+      <div className="flex items-center justify-between gap-3 border-t border-neutral-200 bg-neutral-50 px-3 py-1.5">
+        <span className="text-xs text-neutral-400">
+          {dirty ? "Edited — not yet run" : " "}
+        </span>
+        <button
+          type="button"
+          onClick={() => onRun(text)}
+          disabled={busy || !text.trim()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:bg-accent-hover disabled:bg-neutral-400 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1"
+        >
+          {busy && <Spinner className="h-3 w-3" />}
+          Run SQL
+          <span className="hidden sm:inline text-accent-fg/70">⌘↵</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A browsable list of the queryable columns, so people know what's fair game.
+function SchemaDrawer() {
+  return (
+    <details className="mt-4 group">
+      <summary className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-500 hover:text-neutral-800">
+        <span className="text-neutral-400 transition-transform group-open:rotate-90">▸</span>
+        Browse the {SCHEMA_LINES.length} columns you can ask about
+      </summary>
+      <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+        {SCHEMA_LINES.map((s) => (
+          <div key={s.col} className="flex gap-2 text-xs">
+            <code className="shrink-0 font-mono text-neutral-800">{s.col}</code>
+            <span className="truncate text-neutral-500" title={s.desc}>
+              {s.desc}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+// Copy a shareable link to the current question (?q=...).
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(window.location.href);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // No async clipboard: the URL bar already carries ?q=, so sharing
+          // still works by copying the address manually.
+        }
+      }}
+      className="text-xs px-2 py-1 rounded border border-neutral-300 hover:bg-neutral-100"
+    >
+      {copied ? "Link copied" : "Copy link"}
+    </button>
+  );
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
