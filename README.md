@@ -9,23 +9,26 @@ Live demo: [asknfl.vercel.app](https://asknfl.vercel.app)
 ```
 src/
   app/
-    api/sql/route.ts      Edge function: question + schema to SQL via Claude
-    page.tsx              The UI, DuckDB-WASM client
+    api/sql/route.ts        Server route: question + schema to SQL via Claude
+    api/summarize/route.ts  Server route: results to a one-sentence answer
+    page.tsx                The UI + DuckDB-WASM client
   lib/
-    schema.ts             Trimmed nflfastR schema (57 cols) used in the prompt
-    duckdb.ts             Browser DuckDB loader + query runner
-    examples.ts           The 10 buttons on the landing page
+    schema.ts               Trimmed nflfastR schema (53 cols) used in the prompt
+    duckdb.ts               Browser DuckDB loader + query runner
+    sql-validate.ts         Guards the generated SQL (single read-only SELECT)
+    rate-limit.ts           Best-effort per-IP limit on the paid endpoints
+    examples.ts             The buttons on the landing page
 public/
-  pbp_2023.parquet        Reduced 2023 play-by-play (3.2 MB, ZSTD)
+  pbp_2023.parquet          Reduced 2023 play-by-play (3.2 MB, ZSTD)
 ```
 
 ## How it works
 
 1. You type a question (or click an example).
-2. The Edge function (`/api/sql`) sends your question + the table schema to Claude Haiku 4.5. The schema and the few-shot block are wrapped in `cache_control` so a warm Vercel region pays one round of token cost per cold start and then it's pennies per query.
-3. Claude returns one `SELECT` statement. The route handler strips fences and trailing semicolons.
+2. The server route (`/api/sql`) sends your question + the table schema to Claude Haiku 4.5. The schema and the few-shot block are wrapped in `cache_control` so a warm Vercel region pays one round of token cost per cold start and then it's pennies per query.
+3. Claude returns one `SELECT` statement. The route strips fences and trailing semicolons, then `sql-validate.ts` confirms it's a single read-only SELECT before it reaches the browser (DuckDB-WASM has `httpfs`, so an unchecked `read_parquet('http://...')` would be a client-side exfiltration vector).
 4. The browser hands the SQL to DuckDB-WASM, which runs it directly against the parquet at `/pbp_2023.parquet`. First query also pays for the parquet download (~3 MB) and the WASM bundle.
-5. The results render as a table, with the generated SQL collapsed above it.
+5. The answer leads: `/api/summarize` turns the rows into a one-sentence headline. A single number renders big, a ranking renders as team-colored bars, and everything is backed by a results table. The generated SQL sits in a collapsible drawer where you can edit it and re-run it locally.
 
 The point is that there's no backend query path. After the SQL comes back, your laptop is the database.
 
@@ -35,10 +38,11 @@ The point is that there's no backend query path. After the SQL comes back, your 
 - **Fast.** DuckDB-WASM does the 50k-row aggregations in a few hundred ms, on par with a warm Postgres on the same dataset.
 - **Inspectable.** The generated SQL is shown next to the results. You can copy it and run it yourself, or open the browser dev tools and read the query plan.
 - **Reproducible.** No "trust me, the model said so" answers, every number on screen comes from a SQL query you can read.
+- **Shareable.** Each question is reflected in the URL (`?q=...`), so any answer is a link you can send or bookmark; opening it re-runs the query.
 
 ## Schema
 
-The full nflfastR pbp has 372 columns. I trimmed to 57 that cover the questions people actually ask: down/distance, posteam/defteam, EPA/CPOE/WPA, player names, play type, penalty, score state. See [src/lib/schema.ts](src/lib/schema.ts).
+The full nflfastR pbp has 372 columns. I trimmed to 53 that cover the questions people actually ask: down/distance, posteam/defteam, EPA/CPOE/WPA, player names, play type, penalty, score state. See [src/lib/schema.ts](src/lib/schema.ts). The nflfastR flag columns (touchdown, sack, ...) ship as 0/1 doubles; they're cast to real booleans on load so the schema Claude sees is honest.
 
 ## Prompt engineering notes
 
@@ -73,13 +77,13 @@ This is a one-click Vercel deploy. The only required env var is `ANTHROPIC_API_K
 - The data is the **regular and post-season 2023** only. Anything older or newer is out of scope, and Claude is told so in the system prompt.
 - The model can still write a bad query if your question is ambiguous; it tries the most charitable read.
 - DuckDB-WASM is heavy on first load (~6 MB of WASM + ~3 MB of parquet). After that, queries are local.
-- No multi-turn yet. Each question starts fresh.
+- No multi-turn yet. Each question starts fresh (though you can hand-edit the SQL and re-run it).
 
 ## What's next
 
-- A small bar chart for top-N aggregates.
 - Eval set: 30 questions with gold SQL + tolerance bands on the numbers, so I can measure prompt regressions.
 - 2024 data once it's stable on nflverse.
+- Follow-up suggestions off each answer, for a more conversational loop.
 
 ## License
 
