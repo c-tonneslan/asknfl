@@ -26,6 +26,7 @@ export default function Home() {
   } | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  const [followups, setFollowups] = useState<string[]>([]);
   // Monotonic id so a slow response from an earlier question can't overwrite a
   // newer one (the main flow and the fire-and-forget summarize both check it).
   const reqId = useRef(0);
@@ -82,8 +83,14 @@ export default function Home() {
       body: JSON.stringify({ question: q, sql: sqlText, columns: r.columns, rows: r.rows }),
     })
       .then(async (resp) => {
-        const sj = (await resp.json()) as { summary?: string; error?: string };
-        if (current() && sj.summary) setSummary(sj.summary);
+        const sj = (await resp.json()) as {
+          summary?: string;
+          followups?: string[];
+          error?: string;
+        };
+        if (!current()) return;
+        if (sj.summary) setSummary(sj.summary);
+        if (Array.isArray(sj.followups)) setFollowups(sj.followups.slice(0, 3));
       })
       .catch(() => {
         // Silent: the summary is a bonus, not the answer.
@@ -109,6 +116,7 @@ export default function Home() {
     setSql(v.sql);
     setError(null);
     setSummary(null);
+    setFollowups([]);
     setSummarizing(false);
     setStage("running");
     const r = await runQuery(v.sql);
@@ -129,6 +137,7 @@ export default function Home() {
     setError(null);
     setUsage(null);
     setSummary(null);
+    setFollowups([]);
     setSummarizing(false);
     setStage(dbReady ? "generating" : "loading-db");
     try {
@@ -328,6 +337,21 @@ export default function Home() {
               </p>
             ) : (
               <div className="mt-2 h-5 w-2/3 animate-pulse rounded bg-accent/15" />
+            )}
+            {followups.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {followups.map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => ask(f)}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-white/60 px-3 py-1.5 text-xs text-accent hover:bg-white hover:border-accent/60 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  >
+                    <span aria-hidden className="text-accent/60">↳</span>
+                    {f}
+                  </button>
+                ))}
+              </div>
             )}
           </section>
         )}

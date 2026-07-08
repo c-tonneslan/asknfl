@@ -1,17 +1,29 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { rateLimited, clientIp } from "@/lib/rate-limit";
+import { parseSummary } from "@/lib/summary-parse";
 
 export const runtime = "nodejs";
 
-const SYSTEM = `You write a one-sentence summary of a DuckDB result set for an NFL question.
+const SYSTEM = `You write a one-sentence summary of a DuckDB result set for an NFL question, then suggest a few natural follow-up questions.
 
-Rules:
+Output format (exactly this shape):
+- First, the one-sentence summary.
+- Then a line containing only three dashes: ---
+- Then up to 3 follow-up questions, one per line, no numbering or bullets.
+
+Summary rules:
 - One sentence. Maximum 30 words.
 - Lead with the headline number or the top player/team. Mention the metric in plain English (passing yards, EPA per play, etc.), not the column name.
 - Don't restate the question or hedge ("based on the results...", "looks like...").
 - Don't make up numbers that aren't in the rows. If the result is empty, say so.
 - The data is the 2023 NFL season (regular + post). Don't claim anything about other years.
-- No Markdown. Plain text.`;
+
+Follow-up rules:
+- Each must be answerable from the same 2023 play-by-play data (down/distance, teams, players, EPA/CPOE/WPA, play type, penalties, score state).
+- Make them a natural next step: drill into a player or team from the result, change the filter, or compare.
+- Short and plain-English, like something a fan would type. No numbering.
+
+No Markdown anywhere. Plain text.`;
 
 interface Body {
   question?: string;
@@ -99,10 +111,11 @@ export async function POST(req: Request) {
   if (!block || block.type !== "text") {
     return Response.json({ error: "No text response" }, { status: 502 });
   }
-  const summary = block.text.trim();
+  const { summary, followups } = parseSummary(block.text);
 
   return Response.json({
     summary,
+    followups,
     usage: {
       input_tokens: res.usage.input_tokens,
       output_tokens: res.usage.output_tokens,

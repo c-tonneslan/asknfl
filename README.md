@@ -28,7 +28,7 @@ public/
 2. The server route (`/api/sql`) sends your question + the table schema to Claude Haiku 4.5. The schema and the few-shot block are wrapped in `cache_control` so a warm Vercel region pays one round of token cost per cold start and then it's pennies per query.
 3. Claude returns one `SELECT` statement. The route strips fences and trailing semicolons, then `sql-validate.ts` confirms it's a single read-only SELECT before it reaches the browser (DuckDB-WASM has `httpfs`, so an unchecked `read_parquet('http://...')` would be a client-side exfiltration vector).
 4. The browser hands the SQL to DuckDB-WASM, which runs it directly against the parquet at `/pbp_2023.parquet`. First query also pays for the parquet download (~3 MB) and the WASM bundle.
-5. The answer leads: `/api/summarize` turns the rows into a one-sentence headline. A single number renders big, a ranking renders as team-colored bars, and everything is backed by a results table. The generated SQL sits in a collapsible drawer where you can edit it and re-run it locally.
+5. The answer leads: `/api/summarize` turns the rows into a one-sentence headline plus a few clickable follow-up questions. A single number renders big, a ranking renders as team-colored bars, and everything is backed by a results table. The generated SQL sits in a collapsible drawer where you can edit it and re-run it locally.
 
 The point is that there's no backend query path. After the SQL comes back, your laptop is the database.
 
@@ -83,7 +83,7 @@ This is a one-click Vercel deploy. The only required env var is `ANTHROPIC_API_K
 
 - Eval set: 30 questions with gold SQL + tolerance bands on the numbers, so I can measure prompt regressions.
 - 2024 data once it's stable on nflverse.
-- Follow-up suggestions off each answer, for a more conversational loop.
+- Genuine multi-turn: thread the previous question and result into the next SQL prompt.
 
 ## License
 
