@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { schemaPrompt, TABLE_NAME } from "@/lib/schema";
 import { validateGeneratedSql } from "@/lib/sql-validate";
+import { rateLimited, clientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,7 @@ Rules:
 - Cap rows: always include LIMIT 100 unless the question asks for a single row.
 - Cast text columns with LOWER() before comparing to avoid case mismatches on team codes (the data is already uppercase, but be defensive).
 - ydstogo, yards_gained, score_differential can be negative; do not coerce.
+- The BOOLEAN flag columns (touchdown, pass_touchdown, rush_touchdown, sack, interception, fumble, fumble_lost, first_down, success, shotgun, no_huddle, qb_scramble, penalty, goal_to_go) are real booleans: filter with WHERE col (or col = TRUE) and count with COUNT(*) FILTER (WHERE col). Never SUM() a boolean — you cannot sum a boolean in DuckDB.
 - A "scoring play" means touchdown OR field_goal_result = 'made' OR (extra_point_result = 'good' AND play_type = 'extra_point') OR two_point_conv_result = 'success'.
 - "Red zone" is yardline_100 <= 20. "Goal-to-go" already has its own column.
 - "Long" 3rd down means down = 3 AND ydstogo >= 7. "Short" means ydstogo <= 2.
@@ -56,13 +58,20 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { question?: string };
+  if (rateLimited(clientIp(req))) {
+    return Response.json({ error: "Too many requests. Try again in a moment." }, { status: 429 });
+  }
+
+  let body: { question?: unknown };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "Body must be JSON" }, { status: 400 });
   }
-  const question = body.question?.trim();
+  if (typeof body.question !== "string") {
+    return Response.json({ error: "'question' must be a string" }, { status: 400 });
+  }
+  const question = body.question.trim();
   if (!question) {
     return Response.json({ error: "Missing 'question'" }, { status: 400 });
   }

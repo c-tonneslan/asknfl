@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { runQuery, getDB, type RunResult } from "@/lib/duckdb";
 import { EXAMPLES } from "@/lib/examples";
+
+// Cap how many rows we render in the table (materialization is already bounded in
+// runQuery); everything is still downloadable via CSV.
+const RENDER_CAP = 500;
 
 type Stage = "idle" | "loading-db" | "generating" | "running" | "done" | "error";
 
@@ -20,6 +24,9 @@ export default function Home() {
   } | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  // Monotonic id so a slow response from an earlier question can't overwrite a
+  // newer one (the main flow and the fire-and-forget summarize both check it).
+  const reqId = useRef(0);
 
   useEffect(() => {
     getDB().then(
@@ -32,6 +39,8 @@ export default function Home() {
   }, []);
 
   async function ask(q: string) {
+    const myId = ++reqId.current;
+    const current = () => reqId.current === myId;
     setQuestion(q);
     setSql(null);
     setResult(null);
@@ -46,6 +55,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
       });
+      if (!current()) return; // a newer question started
       const json = (await res.json()) as
         | {
             sql: string;
@@ -69,6 +79,7 @@ export default function Home() {
       });
       setStage("running");
       const r = await runQuery(json.sql);
+      if (!current()) return; // a newer question started
       setResult(r);
       setStage(r.ok ? "done" : "error");
       if (!r.ok) setError(r.error);
@@ -87,18 +98,24 @@ export default function Home() {
         })
           .then(async (resp) => {
             const sj = (await resp.json()) as { summary?: string; error?: string };
-            if (sj.summary) setSummary(sj.summary);
+            if (current() && sj.summary) setSummary(sj.summary);
           })
           .catch(() => {
             // Silent: the summary is a bonus, not the answer.
           })
-          .finally(() => setSummarizing(false));
+          .finally(() => {
+            if (current()) setSummarizing(false);
+          });
       }
     } catch (e) {
+      if (!current()) return;
       setError(e instanceof Error ? e.message : String(e));
       setStage("error");
     }
   }
+
+  const busy =
+    stage === "loading-db" || stage === "generating" || stage === "running";
 
   return (
     <main className="flex-1 px-4 py-10 sm:px-10 max-w-5xl w-full mx-auto">
@@ -142,16 +159,16 @@ export default function Home() {
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            disabled={
-              !question.trim() || stage === "generating" || stage === "running"
-            }
+            disabled={!question.trim() || busy}
             className="px-4 py-2 rounded-md bg-neutral-900 text-white text-sm disabled:bg-neutral-400"
           >
-            {stage === "generating"
-              ? "Asking Claude…"
-              : stage === "running"
-                ? "Running SQL…"
-                : "Ask"}
+            {stage === "loading-db"
+              ? "Loading data…"
+              : stage === "generating"
+                ? "Asking Claude…"
+                : stage === "running"
+                  ? "Running SQL…"
+                  : "Ask"}
           </button>
           <span className="text-xs text-neutral-500">
             {dbReady
@@ -170,7 +187,7 @@ export default function Home() {
             <button
               key={ex.label}
               onClick={() => ask(ex.question)}
-              disabled={stage === "generating" || stage === "running"}
+              disabled={busy}
               className="text-xs px-3 py-1.5 rounded-full border border-neutral-300 hover:bg-neutral-100 disabled:opacity-50"
               title={ex.question}
             >
@@ -241,7 +258,7 @@ export default function Home() {
               )}
             </div>
           </div>
-          <ResultTable columns={result.columns} rows={result.rows} />
+          <ResultTable columns={result.columns} rows={result.rows} truncated={result.truncated} />
         </section>
       )}
 
@@ -256,9 +273,11 @@ export default function Home() {
 function ResultTable({
   columns,
   rows,
+  truncated,
 }: {
   columns: string[];
   rows: unknown[][];
+  truncated: boolean;
 }) {
   if (rows.length === 0) {
     return (
@@ -267,31 +286,40 @@ function ResultTable({
       </p>
     );
   }
+  const shown = rows.slice(0, RENDER_CAP);
   return (
-    <div className="mt-2 overflow-x-auto rounded-md border border-neutral-200">
-      <table className="w-full text-xs">
-        <thead className="bg-neutral-50 text-neutral-700">
-          <tr>
-            {columns.map((c) => (
-              <th key={c} className="text-left px-3 py-2 font-medium">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-neutral-100">
-              {r.map((cell, j) => (
-                <td key={j} className="px-3 py-1.5 align-top font-mono">
-                  {formatCell(cell)}
-                </td>
+    <>
+      <div className="mt-2 overflow-x-auto rounded-md border border-neutral-200">
+        <table className="w-full text-xs">
+          <thead className="bg-neutral-50 text-neutral-700">
+            <tr>
+              {columns.map((c) => (
+                <th key={c} className="text-left px-3 py-2 font-medium">
+                  {c}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {shown.map((r, i) => (
+              <tr key={i} className="border-t border-neutral-100">
+                {r.map((cell, j) => (
+                  <td key={j} className="px-3 py-1.5 align-top font-mono">
+                    {formatCell(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(rows.length > RENDER_CAP || truncated) && (
+        <p className="mt-2 text-xs text-neutral-500">
+          Showing first {shown.length.toLocaleString()} of {rows.length.toLocaleString()}
+          {truncated ? "+ (result capped at 5,000)" : ""} rows — download the CSV for the full set.
+        </p>
+      )}
+    </>
   );
 }
 

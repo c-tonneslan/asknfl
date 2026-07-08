@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { rateLimited, clientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,10 @@ export async function POST(req: Request) {
     );
   }
 
+  if (rateLimited(clientIp(req))) {
+    return Response.json({ error: "Too many requests. Try again in a moment." }, { status: 429 });
+  }
+
   let body: Body;
   try {
     body = (await req.json()) as Body;
@@ -39,16 +44,22 @@ export async function POST(req: Request) {
     return Response.json({ error: "Body must be JSON" }, { status: 400 });
   }
 
-  const question = body.question?.trim();
-  const sql = body.sql?.trim();
-  const columns = body.columns ?? [];
-  const rows = body.rows ?? [];
+  if (typeof body.question !== "string" || typeof body.sql !== "string") {
+    return Response.json({ error: "'question' and 'sql' must be strings" }, { status: 400 });
+  }
+  const question = body.question.trim();
+  const sql = body.sql.trim();
+  const columns = Array.isArray(body.columns) ? body.columns.slice(0, 60) : [];
+  const rows = Array.isArray(body.rows) ? body.rows : [];
 
   if (!question || !sql) {
     return Response.json(
       { error: "Missing 'question' or 'sql'" },
       { status: 400 },
     );
+  }
+  if (question.length > 500 || sql.length > 8000) {
+    return Response.json({ error: "Input too large" }, { status: 400 });
   }
 
   const trimmed = rows.slice(0, MAX_ROWS);
@@ -64,17 +75,25 @@ export async function POST(req: Request) {
           .join("\n");
 
   const client = new Anthropic({ apiKey });
-  const res = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 150,
-    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-    messages: [
-      {
-        role: "user",
-        content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${tableText}\n\nOne-sentence summary:`,
-      },
-    ],
-  });
+  let res;
+  try {
+    res = await client.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 150,
+      system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [
+        {
+          role: "user",
+          content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${tableText}\n\nOne-sentence summary:`,
+        },
+      ],
+    });
+  } catch (e) {
+    return Response.json(
+      { error: `Claude call failed: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 502 },
+    );
+  }
 
   const block = res.content.find((b) => b.type === "text");
   if (!block || block.type !== "text") {
@@ -97,5 +116,5 @@ function stringify(v: unknown): string {
   if (typeof v === "number") {
     return Number.isInteger(v) ? String(v) : v.toFixed(3);
   }
-  return String(v);
+  return String(v).slice(0, 200); // cap per-cell length so a huge string can't bloat the prompt
 }

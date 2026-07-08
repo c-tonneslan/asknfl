@@ -30,6 +30,31 @@ describe("validateGeneratedSql", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("rejects a SELECT that reads a remote file (read_parquet — SSRF vector)", () => {
+    const r = validateGeneratedSql("SELECT * FROM read_parquet('https://evil.example/x.parquet')");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/read_parquet/i);
+  });
+
+  it("rejects read_csv/read_json/glob embedded anywhere, including inside a CTE", () => {
+    for (const fn of ["read_csv", "read_csv_auto", "read_json", "read_text", "glob"]) {
+      const direct = validateGeneratedSql(`SELECT * FROM ${fn}('http://x')`);
+      expect(direct.ok, `${fn} direct`).toBe(false);
+      const inCte = validateGeneratedSql(`WITH t AS (SELECT * FROM ${fn}('http://x')) SELECT * FROM t`);
+      expect(inCte.ok, `${fn} in CTE`).toBe(false);
+    }
+  });
+
+  it("does NOT reject a column/string that merely contains a forbidden word", () => {
+    // not a function call, and inside a string literal — must still pass
+    expect(validateGeneratedSql("SELECT passer_player_name FROM pbp WHERE desc = 'read_parquet note'").ok).toBe(true);
+  });
+
+  it("accepts a parenthesized leading SELECT (e.g. a parenthesized UNION)", () => {
+    const r = validateGeneratedSql("(SELECT 1) UNION (SELECT 2)");
+    expect(r.ok).toBe(true);
+  });
+
   it("rejects empty SQL", () => {
     const r = validateGeneratedSql("");
     expect(r.ok).toBe(false);
