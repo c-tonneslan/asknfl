@@ -13,22 +13,26 @@ src/
     api/summarize/route.ts  Server route: results to a headline + follow-ups
     page.tsx                The Ask view (text-to-SQL) + DuckDB-WASM client
     dashboards/page.tsx     Curated analytics dashboards
+    fantasy/page.tsx        Fantasy draft board / compare / optimal roster
   components/
     charts.tsx              Dependency-free SVG charts (bar/line/scatter/KPI)
-    SiteNav.tsx             Ask / Dashboards nav
+    SiteNav.tsx             Ask / Dashboards / Fantasy nav
   lib/
     schema.ts               Trimmed nflfastR schema (54 cols) used in the prompt
-    duckdb.ts               Browser DuckDB loader + query runner
+    duckdb.ts               Browser DuckDB loader (pbp + fantasy tables)
     llm.ts                  Provider-agnostic LLM client (Groq by default)
     dashboards.ts           Dashboard + panel definitions (fixed SQL)
+    fantasy.ts              Projection + VBD valuation engine (unit-tested)
     format.ts               Formatting + chart-shape detection
     sql-validate.ts         Guards the generated SQL (single read-only SELECT)
     rate-limit.ts           Best-effort per-IP limit on the LLM endpoints
     examples.ts             The buttons on the landing page
 scripts/
-  build_pbp.py              Rebuilds the parquet from nflverse season releases
+  build_pbp.py              Rebuilds pbp.parquet from nflverse pbp releases
+  build_fantasy.py          Rebuilds fantasy.parquet from nflverse weekly stats
 public/
   pbp.parquet               2020-2025 play-by-play (~16 MB, ZSTD, one row per play)
+  fantasy.parquet           2020-2024 weekly player stats (~0.5 MB, ZSTD)
 ```
 
 ## How it works
@@ -49,12 +53,24 @@ The point is that there's no backend query path. After the SQL comes back, your 
 - **Reproducible.** No "trust me, the model said so" answers, every number on screen comes from a SQL query you can read.
 - **Shareable.** Each question is reflected in the URL (`?q=...`), so any answer is a link you can send or bookmark; opening it re-runs the query.
 
-## Two ways in
+## Three ways in
 
 - **Ask** (`/`) — the open-ended text-to-SQL view. Results render answer-first: a one-sentence headline, then the right visual for the shape (a big number, team-colored ranking bars, a season trend line, or a scatter), then the table, with the editable SQL tucked below.
 - **Dashboards** (`/dashboards`) — curated analytics: *Season Leaderboards*, *Team Profile*, and *League Trends*. Every panel is a fixed, hand-written SQL query run locally in DuckDB-WASM, so these are deterministic, instant, and cost nothing (no model in the loop). See [src/lib/dashboards.ts](src/lib/dashboards.ts).
+- **Fantasy** (`/fantasy`) — a next-season fantasy projection + valuation engine (draft board, head-to-head compare, optimal roster). See below.
 
-Both share one **dependency-free chart layer** ([src/components/charts.tsx](src/components/charts.tsx)) — bar / line / scatter / KPI tiles as inline SVG, auto-selected from the result shape by [src/lib/format.ts](src/lib/format.ts). No charting library: small bundle, CSP-safe. The DuckDB instance is a module singleton, so navigating between the two tabs reuses the same loaded parquet.
+The three share one **dependency-free chart layer** ([src/components/charts.tsx](src/components/charts.tsx)) — bar / line / scatter / KPI tiles as inline SVG, auto-selected from the result shape by [src/lib/format.ts](src/lib/format.ts). No charting library: small bundle, CSP-safe. The DuckDB instance is a module singleton and each dataset loads into its own table on demand, so tabs reuse the same engine and only download the parquet they need (Ask/Dashboards → `pbp.parquet` ~16 MB; Fantasy → `fantasy.parquet` ~0.5 MB).
+
+## Fantasy projections
+
+The Fantasy tab is a transparent value-based-drafting model over nflverse weekly player stats (2020–2024), all computed in the browser ([src/lib/fantasy.ts](src/lib/fantasy.ts), unit-tested in [fantasy.test.ts](src/lib/fantasy.test.ts)):
+
+1. **Fantasy points** per player-season from raw stat components, so scoring format (Standard / Half-PPR / PPR) is a toggle rather than a re-query.
+2. **Projection** of next-season points-per-game as a recency-weighted average of a player's last three seasons (weights 3-2-1), shrunk toward a positional prior by sample size (empirical-Bayes regression to the mean), then multiplied by projected games (recent availability, clamped 8–17).
+3. **Value over replacement (VOR / VBD)** — each position's replacement level is the last startable player for the league size (starters + a share of flex); ranking by VOR is what lets a scarce RB out-rank a higher-scoring QB.
+4. **Auction values** distribute the league's spendable budget across positive-VOR players in proportion to VOR; **optimal roster** greedily fills a legal starting lineup.
+
+Honest limitations, stated in the UI: no rookies without NFL history, and no injury / depth-chart / coaching adjustments. It's a defensible baseline, not a crystal ball.
 
 ## Schema
 
