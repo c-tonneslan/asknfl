@@ -10,11 +10,18 @@ Live demo: [asknfl.vercel.app](https://asknfl.vercel.app)
 src/
   app/
     api/sql/route.ts        Server route: question + schema to SQL via the LLM
-    api/summarize/route.ts  Server route: results to a one-sentence answer
-    page.tsx                The UI + DuckDB-WASM client
+    api/summarize/route.ts  Server route: results to a headline + follow-ups
+    page.tsx                The Ask view (text-to-SQL) + DuckDB-WASM client
+    dashboards/page.tsx     Curated analytics dashboards
+  components/
+    charts.tsx              Dependency-free SVG charts (bar/line/scatter/KPI)
+    SiteNav.tsx             Ask / Dashboards nav
   lib/
     schema.ts               Trimmed nflfastR schema (54 cols) used in the prompt
     duckdb.ts               Browser DuckDB loader + query runner
+    llm.ts                  Provider-agnostic LLM client (Groq by default)
+    dashboards.ts           Dashboard + panel definitions (fixed SQL)
+    format.ts               Formatting + chart-shape detection
     sql-validate.ts         Guards the generated SQL (single read-only SELECT)
     rate-limit.ts           Best-effort per-IP limit on the LLM endpoints
     examples.ts             The buttons on the landing page
@@ -41,6 +48,13 @@ The point is that there's no backend query path. After the SQL comes back, your 
 - **Inspectable.** The generated SQL is shown next to the results. You can copy it and run it yourself, or open the browser dev tools and read the query plan.
 - **Reproducible.** No "trust me, the model said so" answers, every number on screen comes from a SQL query you can read.
 - **Shareable.** Each question is reflected in the URL (`?q=...`), so any answer is a link you can send or bookmark; opening it re-runs the query.
+
+## Two ways in
+
+- **Ask** (`/`) — the open-ended text-to-SQL view. Results render answer-first: a one-sentence headline, then the right visual for the shape (a big number, team-colored ranking bars, a season trend line, or a scatter), then the table, with the editable SQL tucked below.
+- **Dashboards** (`/dashboards`) — curated analytics: *Season Leaderboards*, *Team Profile*, and *League Trends*. Every panel is a fixed, hand-written SQL query run locally in DuckDB-WASM, so these are deterministic, instant, and cost nothing (no model in the loop). See [src/lib/dashboards.ts](src/lib/dashboards.ts).
+
+Both share one **dependency-free chart layer** ([src/components/charts.tsx](src/components/charts.tsx)) — bar / line / scatter / KPI tiles as inline SVG, auto-selected from the result shape by [src/lib/format.ts](src/lib/format.ts). No charting library: small bundle, CSP-safe. The DuckDB instance is a module singleton, so navigating between the two tabs reuses the same loaded parquet.
 
 ## Schema
 

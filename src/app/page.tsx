@@ -5,6 +5,9 @@ import { runQuery, getDB, type RunResult } from "@/lib/duckdb";
 import { EXAMPLES } from "@/lib/examples";
 import { validateGeneratedSql } from "@/lib/sql-validate";
 import { SCHEMA_LINES } from "@/lib/schema";
+import { formatCell, formatNumber, humanizeColumn } from "@/lib/format";
+import { AutoChart } from "@/components/charts";
+import { SiteNav } from "@/components/SiteNav";
 
 // Cap how many rows we render in the table (materialization is already bounded in
 // runQuery); everything is still downloadable via CSV.
@@ -187,6 +190,7 @@ export default function Home() {
 
   return (
     <main className="flex-1 px-4 py-10 sm:px-10 max-w-5xl w-full mx-auto">
+      <SiteNav />
       <header className="mb-10">
         <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
           asknfl
@@ -358,7 +362,11 @@ export default function Home() {
 
         {result?.ok && <Headline columns={result.columns} rows={result.rows} />}
 
-        {result?.ok && <BarChart columns={result.columns} rows={result.rows} />}
+        {result?.ok && result.rows.length > 1 && (
+          <section className="mt-6">
+            <AutoChart columns={result.columns} rows={result.rows} />
+          </section>
+        )}
 
         {result?.ok && result.rows.length > 0 && (
           <section className="mt-6">
@@ -479,45 +487,6 @@ function ResultTable({
   );
 }
 
-function formatCell(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "number") return formatNumber(v);
-  if (typeof v === "boolean") return v ? "yes" : "no";
-  return String(v);
-}
-
-// Whole numbers get thousands separators; fractional values keep up to 3
-// decimals (trailing zeros trimmed) so EPA-style metrics stay readable.
-function formatNumber(v: number): string {
-  if (Number.isInteger(v)) return v.toLocaleString("en-US");
-  return v.toLocaleString("en-US", { maximumFractionDigits: 3 });
-}
-
-// Turn snake_case column names into Title Case, with a few NFL-specific
-// abbreviations preserved (epa, td, wp...). Falls back gracefully.
-const COLUMN_LABELS: Record<string, string> = {
-  epa: "EPA",
-  wpa: "WPA",
-  wp: "Win Prob",
-  cpoe: "CPOE",
-  td: "TD",
-  tds: "TDs",
-  yac: "YAC",
-  qtr: "Quarter",
-  posteam: "Team",
-  defteam: "Opponent",
-  ydstogo: "Yards To Go",
-  ot: "OT",
-};
-
-function humanizeColumn(c: string): string {
-  if (COLUMN_LABELS[c]) return COLUMN_LABELS[c];
-  return c
-    .split("_")
-    .map((w) => COLUMN_LABELS[w] ?? w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 function Spinner({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg
@@ -599,74 +568,6 @@ function humanizeError(error: string): string {
     return "The question couldn't reach the model. This is usually temporary — try again.";
   }
   return "Something went wrong running that question. Try rewording it, or ask a simpler version.";
-}
-
-// nflverse 3-letter team code -> primary color, for coloring ranking bars.
-const TEAM_COLORS: Record<string, string> = {
-  ARI: "#97233F", ATL: "#A71930", BAL: "#241773", BUF: "#00338D",
-  CAR: "#0085CA", CHI: "#0B162A", CIN: "#FB4F14", CLE: "#311D00",
-  DAL: "#003594", DEN: "#FB4F14", DET: "#0076B6", GB: "#203731",
-  HOU: "#03202F", IND: "#002C5F", JAX: "#006778", KC: "#E31837",
-  LA: "#003594", LAC: "#0080C6", LV: "#000000", MIA: "#008E97",
-  MIN: "#4F2683", NE: "#002244", NO: "#D3BC8D", NYG: "#0B2265",
-  NYJ: "#125740", PHI: "#004C54", PIT: "#FFB612", SEA: "#002244",
-  SF: "#AA0000", TB: "#D50A0A", TEN: "#0C2340", WAS: "#5A1414",
-};
-
-// A ranking result (a label column + a numeric column, a handful of rows) reads
-// far better as bars than as a table of numbers. Dependency-free: plain divs
-// scaled by value. Falls back to nothing when the shape doesn't fit.
-function BarChart({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
-  if (rows.length < 2 || rows.length > 30) return null;
-
-  const labelIdx = columns.findIndex((_, j) => typeof firstDefined(rows, j) === "string");
-  const valueIdx = columns.findIndex((_, j) => typeof firstDefined(rows, j) === "number");
-  if (labelIdx === -1 || valueIdx === -1) return null;
-
-  const points = rows
-    .map((r) => ({ label: r[labelIdx], value: r[valueIdx] }))
-    .filter((p) => typeof p.value === "number" && p.label != null) as {
-    label: string;
-    value: number;
-  }[];
-  if (points.length < 2) return null;
-
-  const max = Math.max(...points.map((p) => Math.abs(p.value)));
-  if (max === 0) return null;
-
-  return (
-    <section className="mt-6">
-      <h2 className="text-sm font-medium text-neutral-700 mb-2">
-        {humanizeColumn(columns[valueIdx])} by {humanizeColumn(columns[labelIdx])}
-      </h2>
-      <div className="space-y-1.5">
-        {points.map((p, i) => {
-          const code = String(p.label).toUpperCase();
-          const color = TEAM_COLORS[code] ?? "var(--accent)";
-          return (
-            <div key={i} className="flex items-center gap-2 text-xs">
-              <div className="w-28 shrink-0 truncate text-right text-neutral-600" title={String(p.label)}>
-                {String(p.label)}
-              </div>
-              <div className="relative h-5 flex-1 rounded bg-neutral-100">
-                <div
-                  className="absolute inset-y-0 left-0 rounded"
-                  style={{ width: `${(Math.abs(p.value) / max) * 100}%`, backgroundColor: color }}
-                />
-              </div>
-              <div className="w-16 shrink-0 text-right font-mono tabular-nums text-neutral-900">
-                {formatNumber(p.value)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function firstDefined(rows: unknown[][], j: number): unknown {
-  return rows.find((r) => r[j] !== null && r[j] !== undefined)?.[j];
 }
 
 // The generated SQL, editable and re-runnable straight against DuckDB-WASM.
