@@ -27,6 +27,7 @@ export default function Home() {
   // Monotonic id so a slow response from an earlier question can't overwrite a
   // newer one (the main flow and the fire-and-forget summarize both check it).
   const reqId = useRef(0);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getDB().then(
@@ -37,6 +38,14 @@ export default function Home() {
       },
     );
   }, []);
+
+  // Scroll the answer into view once a query starts — on a phone the results
+  // render far below the chips, so otherwise a fast query looks like a no-op.
+  useEffect(() => {
+    if (stage === "running" || stage === "done" || stage === "error") {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [stage]);
 
   async function ask(q: string) {
     const myId = ++reqId.current;
@@ -126,7 +135,7 @@ export default function Home() {
         <p className="mt-2 text-neutral-600 max-w-2xl leading-relaxed">
           Ask a question in English. Claude writes the DuckDB SQL,{" "}
           <a
-            className="underline underline-offset-2"
+            className="text-accent hover:text-accent-hover underline underline-offset-2 decoration-accent/40"
             href="https://duckdb.org/docs/api/wasm/overview"
             target="_blank"
             rel="noreferrer"
@@ -139,9 +148,10 @@ export default function Home() {
 
       <form
         className="flex flex-col gap-3"
+        aria-busy={busy}
         onSubmit={(e) => {
           e.preventDefault();
-          if (question.trim()) ask(question.trim());
+          if (question.trim() && !busy) ask(question.trim());
         }}
       >
         <label className="text-sm font-medium text-neutral-700" htmlFor="q">
@@ -151,17 +161,26 @@ export default function Home() {
           id="q"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => {
+            // Cmd/Ctrl+Enter submits (plain Enter keeps its newline for long questions).
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && question.trim() && !busy) {
+              e.preventDefault();
+              ask(question.trim());
+            }
+          }}
+          autoFocus
           rows={2}
           placeholder="e.g. Which team gained the most yards on screen passes?"
           maxLength={500}
-          className="w-full border border-neutral-300 rounded-md px-3 py-2 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-neutral-400"
+          className="w-full border border-neutral-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
         />
         <div className="flex items-center gap-3">
           <button
             type="submit"
             disabled={!question.trim() || busy}
-            className="px-4 py-2 rounded-md bg-neutral-900 text-white text-sm disabled:bg-neutral-400"
+            className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] rounded-md bg-accent text-accent-fg text-sm font-medium hover:bg-accent-hover active:bg-accent-hover disabled:bg-neutral-400 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
           >
+            {busy && <Spinner />}
             {stage === "loading-db"
               ? "Loading data…"
               : stage === "generating"
@@ -170,11 +189,30 @@ export default function Home() {
                   ? "Running SQL…"
                   : "Ask"}
           </button>
-          <span className="text-xs text-neutral-500">
-            {dbReady
-              ? "DuckDB ready · ~50k 2023 plays loaded"
-              : "Loading DuckDB-WASM and the parquet…"}
+          <span className="hidden sm:inline text-xs text-neutral-400" aria-hidden>
+            ⌘↵
           </span>
+          <span className="text-xs text-neutral-500">
+            {stage === "loading-db" || (!dbReady && stage === "idle")
+              ? "Loading DuckDB-WASM and the parquet…"
+              : stage === "generating"
+                ? "Claude is writing the SQL…"
+                : stage === "running"
+                  ? "Running in DuckDB-WASM…"
+                  : "DuckDB ready · ~50k 2023 plays loaded"}
+          </span>
+        </div>
+        {/* Screen readers hear the async progress + result arrival. */}
+        <div aria-live="polite" className="sr-only">
+          {stage === "generating"
+            ? "Generating SQL."
+            : stage === "running"
+              ? "Running query."
+              : stage === "done" && result?.ok
+                ? `Query returned ${result.rows.length} rows. ${summary ?? ""}`
+                : stage === "error"
+                  ? `Error: ${error ?? "something went wrong"}`
+                  : ""}
         </div>
       </form>
 
@@ -188,7 +226,7 @@ export default function Home() {
               key={ex.label}
               onClick={() => ask(ex.question)}
               disabled={busy}
-              className="text-xs px-3 py-1.5 rounded-full border border-neutral-300 hover:bg-neutral-100 disabled:opacity-50"
+              className="text-xs px-3 py-2 min-h-[36px] rounded-full border border-neutral-300 text-neutral-700 hover:bg-neutral-100 hover:border-neutral-400 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               title={ex.question}
             >
               {ex.label}
@@ -197,73 +235,114 @@ export default function Home() {
         </div>
       </section>
 
-      {error && (
-        <section className="mt-8 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <div className="font-medium">Error</div>
-          <pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
-            {error}
-          </pre>
-        </section>
-      )}
-
-      {sql && (
-        <section className="mt-8">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-medium text-neutral-700">
-              Generated SQL
-            </h2>
-            <div className="flex items-center gap-3">
-              {usage && (
-                <span className="text-xs text-neutral-500">
-                  {usage.input + usage.cache} in · {usage.output} out
-                  {usage.cache > 0 ? " · cache hit" : ""}
-                </span>
-              )}
-              <CopyButton text={sql} label="Copy SQL" />
-            </div>
-          </div>
-          <pre className="mt-2 rounded-md bg-neutral-900 text-neutral-100 text-xs px-3 py-3 overflow-x-auto font-mono">
-            {sql}
-          </pre>
-        </section>
-      )}
-
-      {result?.ok && (summarizing || summary) && (
-        <section className="mt-6">
-          <p className="text-base text-neutral-800 leading-relaxed">
-            {summary ?? (
-              <span className="text-neutral-400 italic">summarizing…</span>
+      <div ref={resultsRef} className="scroll-mt-6">
+        {error && (
+          <section
+            role="alert"
+            className="mt-8 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            <div className="font-medium">That one didn&apos;t work</div>
+            <p className="mt-1 text-red-700">
+              {humanizeError(error)}
+            </p>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-red-600/80 select-none">
+                Technical detail
+              </summary>
+              <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-700">
+                {error}
+              </pre>
+            </details>
+            {question.trim() && (
+              <button
+                onClick={() => ask(question.trim())}
+                disabled={busy}
+                className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-red-300 text-red-800 text-xs font-medium hover:bg-red-100 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+              >
+                {busy && <Spinner className="h-3.5 w-3.5" />}
+                Try again
+              </button>
             )}
-          </p>
-        </section>
-      )}
+          </section>
+        )}
 
-      {result?.ok && (
-        <section className="mt-6">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-medium text-neutral-700">
-              Results · {result.rows.length}{" "}
-              {result.rows.length === 1 ? "row" : "rows"}
-            </h2>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-neutral-500">
-                {result.elapsedMs.toFixed(0)} ms in-browser
-              </span>
-              {result.rows.length > 0 && (
+        {result?.ok && (summarizing || summary) && (
+          <section className="mt-8 rounded-xl border border-accent/20 bg-accent/5 px-5 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">
+              Answer
+            </div>
+            {summary ? (
+              <p className="mt-1 text-lg leading-relaxed text-neutral-900">
+                {summary}
+              </p>
+            ) : (
+              <div className="mt-2 h-5 w-2/3 animate-pulse rounded bg-accent/15" />
+            )}
+          </section>
+        )}
+
+        {result?.ok && <Headline columns={result.columns} rows={result.rows} />}
+
+        {result?.ok && result.rows.length > 0 && (
+          <section className="mt-6">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-medium text-neutral-700">
+                {result.truncated
+                  ? `Results · first ${result.rows.length.toLocaleString()} rows`
+                  : `Results · ${result.rows.length.toLocaleString()} ${result.rows.length === 1 ? "row" : "rows"}`}
+              </h2>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-neutral-500">
+                  {result.elapsedMs.toFixed(0)} ms in-browser
+                </span>
                 <DownloadCsvButton
                   columns={result.columns}
                   rows={result.rows}
                   question={question}
                 />
-              )}
+              </div>
             </div>
-          </div>
-          <ResultTable columns={result.columns} rows={result.rows} truncated={result.truncated} />
-        </section>
-      )}
+            <ResultTable columns={result.columns} rows={result.rows} truncated={result.truncated} />
+          </section>
+        )}
+
+        {sql && (
+          <details className="mt-6 group">
+            <summary className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900">
+              <span className="text-neutral-400 transition-transform group-open:rotate-90">
+                ▸
+              </span>
+              Show the SQL Claude wrote
+            </summary>
+            <div className="mt-2 overflow-hidden rounded-md border border-neutral-200">
+              <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-50 px-3 py-1.5">
+                <span className="text-xs font-medium text-neutral-500">DuckDB SQL</span>
+                <div className="flex items-center gap-3">
+                  {usage && (
+                    <span className="text-xs text-neutral-400">
+                      {usage.input + usage.cache} in · {usage.output} out
+                      {usage.cache > 0 ? " · cache hit" : ""}
+                    </span>
+                  )}
+                  <CopyButton text={sql} label="Copy" />
+                </div>
+              </div>
+              <pre
+                className="overflow-x-auto bg-neutral-900 px-3 py-3 font-mono text-xs text-neutral-100"
+                tabIndex={0}
+              >
+                {sql}
+              </pre>
+            </div>
+            <p className="mt-1.5 text-xs text-neutral-400">
+              Runs read-only in your browser via DuckDB-WASM — only your question ever leaves the page.
+            </p>
+          </details>
+        )}
+      </div>
 
       <footer className="mt-16 text-xs text-neutral-500 border-t border-neutral-200 pt-6">
-        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2023 pbp · ~50k plays, 57 columns. SQL: Claude Haiku 4.5. Engine: DuckDB-WASM.{" "}
+        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2023 pbp · ~50k plays, 53 columns. SQL: Claude Haiku 4.5. Engine: DuckDB-WASM.{" "}
         <a className="underline" href="https://github.com/c-tonneslan/asknfl" target="_blank" rel="noreferrer">Source on GitHub</a>.
       </footer>
     </main>
@@ -287,24 +366,37 @@ function ResultTable({
     );
   }
   const shown = rows.slice(0, RENDER_CAP);
+  // Right-align (and number-format) a column when its first non-null value is a
+  // number, so ranking tables line up on the decimal instead of ragged-left.
+  const numericCol = columns.map((_, j) => {
+    const cell = rows.find((r) => r[j] !== null && r[j] !== undefined)?.[j];
+    return typeof cell === "number";
+  });
   return (
     <>
       <div className="mt-2 overflow-x-auto rounded-md border border-neutral-200">
         <table className="w-full text-xs">
           <thead className="bg-neutral-50 text-neutral-700">
             <tr>
-              {columns.map((c) => (
-                <th key={c} className="text-left px-3 py-2 font-medium">
-                  {c}
+              {columns.map((c, j) => (
+                <th
+                  key={c}
+                  className={`px-3 py-2 font-medium whitespace-nowrap ${numericCol[j] ? "text-right" : "text-left"}`}
+                  title={c}
+                >
+                  {humanizeColumn(c)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {shown.map((r, i) => (
-              <tr key={i} className="border-t border-neutral-100">
+              <tr key={i} className="border-t border-neutral-100 hover:bg-neutral-50/60">
                 {r.map((cell, j) => (
-                  <td key={j} className="px-3 py-1.5 align-top font-mono">
+                  <td
+                    key={j}
+                    className={`px-3 py-1.5 align-top ${numericCol[j] ? "text-right font-mono tabular-nums text-neutral-900" : "text-neutral-700"}`}
+                  >
                     {formatCell(cell)}
                   </td>
                 ))}
@@ -325,12 +417,124 @@ function ResultTable({
 
 function formatCell(v: unknown): string {
   if (v === null || v === undefined) return "—";
-  if (typeof v === "number") {
-    if (Number.isInteger(v)) return v.toString();
-    return v.toFixed(3);
-  }
-  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return formatNumber(v);
+  if (typeof v === "boolean") return v ? "yes" : "no";
   return String(v);
+}
+
+// Whole numbers get thousands separators; fractional values keep up to 3
+// decimals (trailing zeros trimmed) so EPA-style metrics stay readable.
+function formatNumber(v: number): string {
+  if (Number.isInteger(v)) return v.toLocaleString("en-US");
+  return v.toLocaleString("en-US", { maximumFractionDigits: 3 });
+}
+
+// Turn snake_case column names into Title Case, with a few NFL-specific
+// abbreviations preserved (epa, td, wp...). Falls back gracefully.
+const COLUMN_LABELS: Record<string, string> = {
+  epa: "EPA",
+  wpa: "WPA",
+  wp: "Win Prob",
+  cpoe: "CPOE",
+  td: "TD",
+  tds: "TDs",
+  yac: "YAC",
+  qtr: "Quarter",
+  posteam: "Team",
+  defteam: "Opponent",
+  ydstogo: "Yards To Go",
+  ot: "OT",
+};
+
+function humanizeColumn(c: string): string {
+  if (COLUMN_LABELS[c]) return COLUMN_LABELS[c];
+  return c
+    .split("_")
+    .map((w) => COLUMN_LABELS[w] ?? w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      className={`animate-spin ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-90"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
+}
+
+// A single scalar result (one row, one numeric column) is the whole answer —
+// show it big instead of burying it in a 1x1 table. A one-row, few-column
+// result (a single player's line) becomes a row of stat tiles.
+function Headline({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
+  if (rows.length !== 1) return null;
+  const row = rows[0];
+
+  if (columns.length === 1 && typeof row[0] === "number") {
+    return (
+      <section className="mt-4">
+        <div className="text-4xl font-semibold tabular-nums text-neutral-900">
+          {formatNumber(row[0] as number)}
+        </div>
+        <div className="mt-1 text-sm text-neutral-500">{humanizeColumn(columns[0])}</div>
+      </section>
+    );
+  }
+
+  if (columns.length >= 2 && columns.length <= 5) {
+    return (
+      <section className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        {columns.map((c, j) => (
+          <div key={c} className="rounded-lg border border-neutral-200 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-neutral-400">
+              {humanizeColumn(c)}
+            </div>
+            <div
+              className={`mt-0.5 text-lg font-semibold text-neutral-900 ${typeof row[j] === "number" ? "tabular-nums" : ""}`}
+            >
+              {formatCell(row[j])}
+            </div>
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  return null;
+}
+
+// Translate the raw error strings users can hit into one plain sentence.
+function humanizeError(error: string): string {
+  const e = error.toLowerCase();
+  if (e.includes("rejected")) {
+    return "Claude wrote a query that isn't allowed for safety. Try rewording the question.";
+  }
+  if (e.includes("too many requests") || e.includes("429")) {
+    return "You're asking a bit fast — give it a few seconds and try again.";
+  }
+  if (e.includes("catalog") || e.includes("does not exist") || e.includes("referenced column")) {
+    return "The query referenced something that isn't in the data. Try being more specific.";
+  }
+  if (e.includes("api key") || e.includes("anthropic")) {
+    return "The question couldn't reach the model. This is usually temporary — try again.";
+  }
+  return "Something went wrong running that question. Try rewording it, or ask a simpler version.";
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
