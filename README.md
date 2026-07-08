@@ -1,6 +1,6 @@
 # asknfl
 
-Ask a question in plain English about the 2023 NFL season. Llama 3.3 (via Groq's free API) writes the DuckDB SQL, DuckDB-WASM runs it in your browser against ~50,000 plays from [nflverse-data](https://github.com/nflverse/nflverse-data). No server-side database, no Postgres, no warehouse, the data ships as a 3 MB parquet, the SQL runs locally on your machine.
+Ask a question in plain English about the 2020&ndash;2025 NFL seasons. Llama 3.3 (via Groq's free API) writes the DuckDB SQL, DuckDB-WASM runs it in your browser against ~295,000 plays from [nflverse-data](https://github.com/nflverse/nflverse-data). No server-side database, no Postgres, no warehouse, the data ships as a ~16 MB parquet, the SQL runs locally on your machine.
 
 Live demo: [asknfl.vercel.app](https://asknfl.vercel.app)
 
@@ -13,13 +13,15 @@ src/
     api/summarize/route.ts  Server route: results to a one-sentence answer
     page.tsx                The UI + DuckDB-WASM client
   lib/
-    schema.ts               Trimmed nflfastR schema (53 cols) used in the prompt
+    schema.ts               Trimmed nflfastR schema (54 cols) used in the prompt
     duckdb.ts               Browser DuckDB loader + query runner
     sql-validate.ts         Guards the generated SQL (single read-only SELECT)
-    rate-limit.ts           Best-effort per-IP limit on the paid endpoints
+    rate-limit.ts           Best-effort per-IP limit on the LLM endpoints
     examples.ts             The buttons on the landing page
+scripts/
+  build_pbp.py              Rebuilds the parquet from nflverse season releases
 public/
-  pbp_2023.parquet          Reduced 2023 play-by-play (3.2 MB, ZSTD)
+  pbp.parquet               2020-2025 play-by-play (~16 MB, ZSTD, one row per play)
 ```
 
 ## How it works
@@ -27,7 +29,7 @@ public/
 1. You type a question (or click an example).
 2. The server route (`/api/sql`) sends your question + the table schema to Llama 3.3 70B on [Groq](https://groq.com)'s free tier, through a thin provider-agnostic wrapper (`lib/llm.ts`) that speaks the OpenAI chat API — so swapping to Gemini, Together, a local vLLM, or back to a paid model is a one-file change.
 3. The model returns one `SELECT` statement. The route strips fences and trailing semicolons, then `sql-validate.ts` confirms it's a single read-only SELECT before it reaches the browser (DuckDB-WASM has `httpfs`, so an unchecked `read_parquet('http://...')` would be a client-side exfiltration vector).
-4. The browser hands the SQL to DuckDB-WASM, which runs it directly against the parquet at `/pbp_2023.parquet`. First query also pays for the parquet download (~3 MB) and the WASM bundle.
+4. The browser hands the SQL to DuckDB-WASM, which runs it directly against the parquet at `/pbp.parquet`. First query also pays for the parquet download (~16 MB) and the WASM bundle; after that every query is local.
 5. The answer leads: `/api/summarize` turns the rows into a one-sentence headline plus a few clickable follow-up questions. A single number renders big, a ranking renders as team-colored bars, and everything is backed by a results table. The generated SQL sits in a collapsible drawer where you can edit it and re-run it locally.
 
 The point is that there's no backend query path. After the SQL comes back, your laptop is the database.
@@ -35,14 +37,14 @@ The point is that there's no backend query path. After the SQL comes back, your 
 ## Why this is the right shape
 
 - **Free to host.** Vercel free tier + a static parquet + Groq's free inference tier. No paid API in the path.
-- **Fast.** DuckDB-WASM does the 50k-row aggregations in a few hundred ms, on par with a warm Postgres on the same dataset.
+- **Fast.** DuckDB-WASM does the ~295k-row aggregations in a few hundred ms, on par with a warm Postgres on the same dataset.
 - **Inspectable.** The generated SQL is shown next to the results. You can copy it and run it yourself, or open the browser dev tools and read the query plan.
 - **Reproducible.** No "trust me, the model said so" answers, every number on screen comes from a SQL query you can read.
 - **Shareable.** Each question is reflected in the URL (`?q=...`), so any answer is a link you can send or bookmark; opening it re-runs the query.
 
 ## Schema
 
-The full nflfastR pbp has 372 columns. I trimmed to 53 that cover the questions people actually ask: down/distance, posteam/defteam, EPA/CPOE/WPA, player names, play type, penalty, score state. See [src/lib/schema.ts](src/lib/schema.ts). The nflfastR flag columns (touchdown, sack, ...) ship as 0/1 doubles; they're cast to real booleans on load so the schema the model sees is honest.
+The full nflfastR pbp has 372 columns. I trimmed to 54 that cover the questions people actually ask: season, down/distance, posteam/defteam, EPA/CPOE/WPA, player names, play type, penalty, score state. See [src/lib/schema.ts](src/lib/schema.ts). The nflfastR flag columns (touchdown, sack, ...) ship as 0/1 doubles; they're cast to real booleans on load so the schema the model sees is honest.
 
 ## Prompt engineering notes
 
@@ -74,9 +76,9 @@ This is a one-click Vercel deploy. The only required env var is `GROQ_API_KEY` (
 
 ## Caveats
 
-- The data is the **regular and post-season 2023** only. Anything older or newer is out of scope, and the model is told so in the system prompt.
+- The data is the **regular and post-season, 2020 through 2025**. Anything outside that window is out of scope, and the model is told so; when you don't name a season it defaults to the latest (2025). Rebuild/extend the window with `python3 scripts/build_pbp.py <years…>`.
 - The model can still write a bad query if your question is ambiguous; it tries the most charitable read.
-- DuckDB-WASM is heavy on first load (~6 MB of WASM + ~3 MB of parquet). After that, queries are local.
+- DuckDB-WASM is heavy on first load (~6 MB of WASM + ~16 MB of parquet). After that, queries are local.
 - No multi-turn yet. Each question starts fresh (though you can hand-edit the SQL and re-run it).
 
 ## What's next

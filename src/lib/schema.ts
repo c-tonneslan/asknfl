@@ -1,10 +1,12 @@
 // Column descriptions for the text-to-SQL prompt. Trimmed from the 372-column
 // nflfastR play-by-play to the ~50 most-asked fields so the model has every
-// signal it needs without drowning in metadata.
+// signal it needs without drowning in metadata. Data covers the 2020-2025
+// seasons; `season` distinguishes them.
 
 export const TABLE_NAME = "pbp";
 
 export const SCHEMA_LINES: { col: string; type: string; desc: string }[] = [
+  { col: "season", type: "INTEGER", desc: "NFL season year, 2020 through 2025" },
   { col: "play_id", type: "BIGINT", desc: "Unique play id within a game" },
   { col: "game_id", type: "VARCHAR", desc: "Game id, e.g. 2023_01_DET_KC" },
   { col: "home_team", type: "VARCHAR", desc: "Home team 3-letter code" },

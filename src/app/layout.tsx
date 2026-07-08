@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "asknfl — natural-language SQL over NFL play-by-play",
   description:
-    "Ask a question in English, Llama 3.3 writes the SQL, DuckDB-WASM runs it in your browser against 50k 2023 nflfastR plays.",
+    "Ask a question in English, Llama 3.3 writes the SQL, DuckDB-WASM runs it in your browser against ~295k nflfastR plays from the 2020-2025 NFL seasons.",
 };
 
 export default function RootLayout({

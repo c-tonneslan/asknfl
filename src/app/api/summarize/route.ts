@@ -16,10 +16,10 @@ Summary rules:
 - Lead with the headline number or the top player/team. Mention the metric in plain English (passing yards, EPA per play, etc.), not the column name.
 - Don't restate the question or hedge ("based on the results...", "looks like...").
 - Don't make up numbers that aren't in the rows. If the result is empty, say so.
-- The data is the 2023 NFL season (regular + post). Don't claim anything about other years.
+- The data covers the 2020-2025 NFL seasons (regular + post). If a season is in the rows or implied by the question, name it; don't claim anything outside 2020-2025.
 
 Follow-up rules:
-- Each must be answerable from the same 2023 play-by-play data (down/distance, teams, players, EPA/CPOE/WPA, play type, penalties, score state).
+- Each must be answerable from the same 2020-2025 play-by-play data (season, down/distance, teams, players, EPA/CPOE/WPA, play type, penalties, score state). Comparing across seasons is a great follow-up.
 - Make them a natural next step: drill into a player or team from the result, change the filter, or compare.
 - Short and plain-English, like something a fan would type. No numbering.
 

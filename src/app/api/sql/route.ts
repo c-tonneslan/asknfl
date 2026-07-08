@@ -24,22 +24,28 @@ Rules:
 - "Red zone" is yardline_100 <= 20. "Goal-to-go" already has its own column.
 - "Long" 3rd down means down = 3 AND ydstogo >= 7. "Short" means ydstogo <= 2.
 - "Garbage time" is abs(score_differential) >= 17 in the 4th quarter.
-- The data covers the 2023 NFL season only (regular and postseason). Don't claim anything about other years.
+- The data covers the 2020 through 2025 NFL seasons (regular and postseason), one row per play. The 'season' column is the year.
+- SEASON HANDLING: if the question names a season/year (e.g. "in 2022", "the 2021 season"), add WHERE season = <year>. If it names a range ("since 2022", "2020 to 2023"), use season BETWEEN or >=. If it asks to compare or trend across years ("by season", "each year", "who led every season"), GROUP BY season. If NO season is mentioned at all, default to the most recent season: WHERE season = 2025. Always make the season filter explicit in the SQL so the answer is unambiguous.
+- "Postseason"/"playoffs" is season_type = 'POST'; "regular season" is season_type = 'REG'. Combine with season, e.g. the 2023 playoffs is season = 2023 AND season_type = 'POST'.
 
 If the question is ambiguous, pick the most charitable single SQL query and return it. Do not ask follow-up questions.`;
 
 const examples = [
   {
-    q: "Most passing TDs in the red zone",
-    sql: `SELECT passer_player_name, COUNT(*) AS red_zone_pass_tds\nFROM ${TABLE_NAME}\nWHERE play_type = 'pass'\n  AND pass_touchdown = TRUE\n  AND yardline_100 <= 20\nGROUP BY passer_player_name\nORDER BY red_zone_pass_tds DESC\nLIMIT 100`,
+    q: "Most passing TDs in the red zone in 2022",
+    sql: `SELECT passer_player_name, COUNT(*) AS red_zone_pass_tds\nFROM ${TABLE_NAME}\nWHERE season = 2022\n  AND play_type = 'pass'\n  AND pass_touchdown = TRUE\n  AND yardline_100 <= 20\nGROUP BY passer_player_name\nORDER BY red_zone_pass_tds DESC\nLIMIT 100`,
   },
   {
-    q: "Average EPA on 3rd-and-long this season",
-    sql: `SELECT ROUND(AVG(epa), 3) AS avg_epa\nFROM ${TABLE_NAME}\nWHERE down = 3 AND ydstogo >= 7`,
+    q: "Average EPA on 3rd-and-long",
+    sql: `SELECT ROUND(AVG(epa), 3) AS avg_epa\nFROM ${TABLE_NAME}\nWHERE season = 2025 AND down = 3 AND ydstogo >= 7`,
   },
   {
-    q: "Eagles vs Cowboys: total yards on the ground",
-    sql: `SELECT posteam, SUM(yards_gained) AS rush_yards\nFROM ${TABLE_NAME}\nWHERE play_type = 'run'\n  AND ((posteam = 'PHI' AND defteam = 'DAL') OR (posteam = 'DAL' AND defteam = 'PHI'))\nGROUP BY posteam\nORDER BY rush_yards DESC`,
+    q: "Sack leader each season",
+    sql: `SELECT season, defteam, COUNT(*) AS sacks\nFROM ${TABLE_NAME}\nWHERE sack = TRUE\nGROUP BY season, defteam\nQUALIFY ROW_NUMBER() OVER (PARTITION BY season ORDER BY COUNT(*) DESC) = 1\nORDER BY season`,
+  },
+  {
+    q: "Eagles vs Cowboys ground yards in the 2023 season",
+    sql: `SELECT posteam, SUM(yards_gained) AS rush_yards\nFROM ${TABLE_NAME}\nWHERE season = 2023\n  AND play_type = 'run'\n  AND ((posteam = 'PHI' AND defteam = 'DAL') OR (posteam = 'DAL' AND defteam = 'PHI'))\nGROUP BY posteam\nORDER BY rush_yards DESC`,
   },
 ];
 

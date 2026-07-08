@@ -1,6 +1,14 @@
 export const EXAMPLES: { label: string; question: string }[] = [
   {
-    label: "Red zone TDs",
+    label: "Passing leader / season",
+    question: "Who led the NFL in passing yards in each season from 2020 to 2025?",
+  },
+  {
+    label: "Mahomes by year",
+    question: "How many touchdown passes did Patrick Mahomes throw each season?",
+  },
+  {
+    label: "Red zone TDs (2023)",
     question: "Who threw the most red-zone passing touchdowns in 2023?",
   },
   {

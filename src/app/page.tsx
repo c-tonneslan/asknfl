@@ -201,7 +201,7 @@ export default function Home() {
           >
             DuckDB-WASM
           </a>{" "}
-          runs it in your browser against ~50k 2023 nflfastR plays.
+          runs it in your browser against ~295k nflfastR plays from the 2020&ndash;2025 seasons.
         </p>
       </header>
 
@@ -258,7 +258,7 @@ export default function Home() {
                 ? "Llama 3.3 is writing the SQL…"
                 : stage === "running"
                   ? "Running in DuckDB-WASM…"
-                  : "DuckDB ready · ~50k 2023 plays loaded"}
+                  : "DuckDB ready · ~295k plays, 2020–2025 loaded"}
           </span>
         </div>
         {/* Screen readers hear the async progress + result arrival. */}
@@ -406,7 +406,7 @@ export default function Home() {
       </div>
 
       <footer className="mt-16 text-xs text-neutral-500 border-t border-neutral-200 pt-6">
-        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2023 pbp · ~50k plays, 53 columns. SQL: Llama 3.3 70B on Groq. Engine: DuckDB-WASM.{" "}
+        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2020–2025 pbp · ~295k plays, 54 columns. SQL: Llama 3.3 70B on Groq. Engine: DuckDB-WASM.{" "}
         <a className="underline" href="https://github.com/c-tonneslan/asknfl" target="_blank" rel="noreferrer">Source on GitHub</a>.
       </footer>
     </main>

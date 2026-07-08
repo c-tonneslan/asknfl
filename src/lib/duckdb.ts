@@ -27,7 +27,7 @@ async function init(): Promise<AsyncDuckDB> {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   URL.revokeObjectURL(workerUrl);
 
-  const parquetUrl = `${window.location.origin}/pbp_2023.parquet`;
+  const parquetUrl = `${window.location.origin}/pbp.parquet`;
   const conn = await db.connect();
   const replace = BOOL_COLS.length
     ? ` REPLACE (${BOOL_COLS.map((c) => `CAST(${c} AS BOOLEAN) AS ${c}`).join(", ")})`
