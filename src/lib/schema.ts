@@ -1,4 +1,4 @@
-// Column descriptions for the Claude SQL prompt. Trimmed from the 372-column
+// Column descriptions for the text-to-SQL prompt. Trimmed from the 372-column
 // nflfastR play-by-play to the ~50 most-asked fields so the model has every
 // signal it needs without drowning in metadata.
 

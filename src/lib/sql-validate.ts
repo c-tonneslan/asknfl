@@ -1,4 +1,4 @@
-// Belt-and-braces check on the SQL Claude returns from /api/sql. DuckDB-WASM
+// Belt-and-braces check on the SQL the model returns from /api/sql. DuckDB-WASM
 // runs in the browser against a parquet, so there's nothing to actually
 // destroy — but we still don't want the API echoing back DROP, INSERT, or
 // multi-statement payloads. The system prompt asks for one SELECT; this

@@ -101,7 +101,7 @@ export default function Home() {
   }
 
   // Re-run SQL the user has edited by hand, straight against DuckDB-WASM —
-  // skipping the Claude round-trip. Still validated so the httpfs/read_parquet
+  // skipping the model round-trip. Still validated so the httpfs/read_parquet
   // guard from the API applies to hand-written queries too.
   async function runEditedSql(edited: string) {
     const v = validateGeneratedSql(edited);
@@ -192,7 +192,7 @@ export default function Home() {
           asknfl
         </h1>
         <p className="mt-2 text-neutral-600 max-w-2xl leading-relaxed">
-          Ask a question in English. Claude writes the DuckDB SQL,{" "}
+          Ask a question in English. Llama 3.3 writes the DuckDB SQL,{" "}
           <a
             className="text-accent hover:text-accent-hover underline underline-offset-2 decoration-accent/40"
             href="https://duckdb.org/docs/api/wasm/overview"
@@ -243,7 +243,7 @@ export default function Home() {
             {stage === "loading-db"
               ? "Loading data…"
               : stage === "generating"
-                ? "Asking Claude…"
+                ? "Writing SQL…"
                 : stage === "running"
                   ? "Running SQL…"
                   : "Ask"}
@@ -255,7 +255,7 @@ export default function Home() {
             {stage === "loading-db" || (!dbReady && stage === "idle")
               ? "Loading DuckDB-WASM and the parquet…"
               : stage === "generating"
-                ? "Claude is writing the SQL…"
+                ? "Llama 3.3 is writing the SQL…"
                 : stage === "running"
                   ? "Running in DuckDB-WASM…"
                   : "DuckDB ready · ~50k 2023 plays loaded"}
@@ -390,7 +390,7 @@ export default function Home() {
               <span className="text-neutral-400 transition-transform group-open:rotate-90">
                 ▸
               </span>
-              Show the SQL Claude wrote
+              Show the generated SQL
             </summary>
             <SqlEditor
               sql={sql}
@@ -406,7 +406,7 @@ export default function Home() {
       </div>
 
       <footer className="mt-16 text-xs text-neutral-500 border-t border-neutral-200 pt-6">
-        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2023 pbp · ~50k plays, 53 columns. SQL: Claude Haiku 4.5. Engine: DuckDB-WASM.{" "}
+        Data: <a className="underline" href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noreferrer">nflverse-data</a> 2023 pbp · ~50k plays, 53 columns. SQL: Llama 3.3 70B on Groq. Engine: DuckDB-WASM.{" "}
         <a className="underline" href="https://github.com/c-tonneslan/asknfl" target="_blank" rel="noreferrer">Source on GitHub</a>.
       </footer>
     </main>
@@ -587,7 +587,7 @@ function Headline({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
 function humanizeError(error: string): string {
   const e = error.toLowerCase();
   if (e.includes("rejected")) {
-    return "Claude wrote a query that isn't allowed for safety. Try rewording the question.";
+    return "The model wrote a query that isn't allowed for safety. Try rewording the question.";
   }
   if (e.includes("too many requests") || e.includes("429")) {
     return "You're asking a bit fast — give it a few seconds and try again.";
@@ -595,7 +595,7 @@ function humanizeError(error: string): string {
   if (e.includes("catalog") || e.includes("does not exist") || e.includes("referenced column")) {
     return "The query referenced something that isn't in the data. Try being more specific.";
   }
-  if (e.includes("api key") || e.includes("anthropic")) {
+  if (e.includes("api key") || e.includes("model call failed") || e.includes("groq")) {
     return "The question couldn't reach the model. This is usually temporary — try again.";
   }
   return "Something went wrong running that question. Try rewording it, or ask a simpler version.";

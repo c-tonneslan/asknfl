@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { rateLimited, clientIp } from "@/lib/rate-limit";
 import { parseSummary } from "@/lib/summary-parse";
+import { chat, hasLlmKey } from "@/lib/llm";
 
 export const runtime = "nodejs";
 
@@ -37,10 +37,9 @@ interface Body {
 const MAX_ROWS = 20;
 
 export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!hasLlmKey()) {
     return Response.json(
-      { error: "Server missing ANTHROPIC_API_KEY" },
+      { error: "Server missing GROQ_API_KEY" },
       { status: 500 },
     );
   }
@@ -86,40 +85,32 @@ export async function POST(req: Request) {
           .filter(Boolean)
           .join("\n");
 
-  const client = new Anthropic({ apiKey });
   let res;
   try {
-    res = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 150,
-      system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-      messages: [
-        {
-          role: "user",
-          content: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${tableText}\n\nOne-sentence summary:`,
-        },
-      ],
+    res = await chat({
+      system: SYSTEM,
+      user: `Question: ${question}\n\nSQL:\n${sql}\n\nResult:\n${tableText}\n\nOne-sentence summary, then follow-ups:`,
+      maxTokens: 250,
     });
   } catch (e) {
     return Response.json(
-      { error: `Claude call failed: ${e instanceof Error ? e.message : String(e)}` },
+      { error: `Model call failed: ${e instanceof Error ? e.message : String(e)}` },
       { status: 502 },
     );
   }
 
-  const block = res.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") {
+  if (!res.text) {
     return Response.json({ error: "No text response" }, { status: 502 });
   }
-  const { summary, followups } = parseSummary(block.text);
+  const { summary, followups } = parseSummary(res.text);
 
   return Response.json({
     summary,
     followups,
     usage: {
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-      cache_read_input_tokens: res.usage.cache_read_input_tokens ?? 0,
+      input_tokens: res.usage.input,
+      output_tokens: res.usage.output,
+      cache_read_input_tokens: res.usage.cache,
     },
   });
 }

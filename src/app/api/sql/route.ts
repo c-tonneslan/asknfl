@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { schemaPrompt, TABLE_NAME } from "@/lib/schema";
 import { validateGeneratedSql } from "@/lib/sql-validate";
 import { rateLimited, clientIp } from "@/lib/rate-limit";
+import { chat, hasLlmKey } from "@/lib/llm";
 
 export const runtime = "nodejs";
 
@@ -50,10 +50,9 @@ function exampleBlock(): string {
 }
 
 export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!hasLlmKey()) {
     return Response.json(
-      { error: "Server missing ANTHROPIC_API_KEY" },
+      { error: "Server missing GROQ_API_KEY" },
       { status: 500 },
     );
   }
@@ -82,38 +81,24 @@ export async function POST(req: Request) {
     );
   }
 
-  const client = new Anthropic({ apiKey });
   let res;
   try {
-    res = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 600,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: `Here are a few good examples:\n\n${exampleBlock()}\n\nNow answer this one. Return only the SQL.\n\nQ: ${question}\nSQL:`,
-      },
-    ],
-  });
+    res = await chat({
+      system: SYSTEM,
+      user: `Here are a few good examples:\n\n${exampleBlock()}\n\nNow answer this one. Return only the SQL.\n\nQ: ${question}\nSQL:`,
+      maxTokens: 600,
+    });
   } catch (e) {
     return Response.json(
-      { error: `Claude call failed: ${e instanceof Error ? e.message : String(e)}` },
+      { error: `Model call failed: ${e instanceof Error ? e.message : String(e)}` },
       { status: 502 },
     );
   }
 
-  const block = res.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") {
+  if (!res.text) {
     return Response.json({ error: "No text response" }, { status: 502 });
   }
-  let sql = block.text.trim();
+  let sql = res.text;
 
   // Strip the occasional fence + trailing semicolon
   sql = sql.replace(/^```(?:sql)?\s*/i, "").replace(/```\s*$/i, "").trim();
@@ -131,9 +116,9 @@ export async function POST(req: Request) {
   return Response.json({
     sql,
     usage: {
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-      cache_read_input_tokens: res.usage.cache_read_input_tokens ?? 0,
+      input_tokens: res.usage.input,
+      output_tokens: res.usage.output,
+      cache_read_input_tokens: res.usage.cache,
     },
   });
 }

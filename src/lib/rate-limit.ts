@@ -1,6 +1,6 @@
-// Best-effort in-memory per-IP rate limit for the paid Claude endpoints.
+// Best-effort in-memory per-IP rate limit for the LLM endpoints.
 // On serverless this is per-instance (not a hard global cap), but it meaningfully
-// raises the bar against scripted abuse of ANTHROPIC_API_KEY without pulling in a
+// raises the bar against scripted abuse of the GROQ_API_KEY without pulling in a
 // Redis/KV dependency for a demo app.
 const WINDOW_MS = 60_000;
 const DEFAULT_MAX = 20;
